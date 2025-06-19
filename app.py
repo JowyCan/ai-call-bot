@@ -1,45 +1,59 @@
-from flask import Flask, request
-from flask_cors import CORS
+from flask import Flask, request, Response
 from twilio.twiml.voice_response import VoiceResponse
-from openai import OpenAI
+import openai
 import os
 
+from io import BytesIO
+import requests
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 app = Flask(__name__)
-CORS(app)
-
-# Inicializar el cliente de OpenAI con la nueva API
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-@app.route("/", methods=["GET"])
-def index():
-    return "Servidor de AI Call Bot operativo."
 
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
-    # Extraer los datos del número llamante
-    from_number = request.values.get("From", "Desconocido")
+    response = VoiceResponse()
+    response.say("Hola. Esta llamada será grabada. Por favor, diga su mensaje después del tono.",
+                 voice="Polly.Lucia", language="es-ES")
+    response.record(
+        action="/process-recording",
+        method="POST",
+        maxLength=10,
+        timeout=1,
+        transcribe=False,
+        playBeep=True
+    )
+    return Response(str(response), mimetype="application/xml")
 
-    # Crear un mensaje basado en el número llamante
-    messages = [
-        {"role": "system", "content": "Eres un agente automático diseñado para disuadir llamadas sospechosas o de cobro."},
-        {"role": "user", "content": f"Recibes una llamada sospechosa del número {from_number}. Responde con firmeza pero educación, en español, para disuadir al llamante."}
-    ]
+@app.route("/process-recording", methods=["POST"])
+def process_recording():
+    recording_url = request.form.get("RecordingUrl")
 
-    # Llamada al modelo GPT-3.5-Turbo
-    chat_response = client.chat.completions.create(
+    if not recording_url:
+        return "No recording received", 400
+
+    audio_url = recording_url + ".wav"
+    audio_data = requests.get(audio_url).content
+    audio_file = BytesIO(audio_data)
+
+    transcript = openai.audio.transcriptions.create(
+        model="whisper-1",
+        file=audio_file,
+        language="es"
+    ).text
+
+    completion = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=messages,
+        messages=[{"role": "user", "content": transcript}],
         temperature=0.7
     )
 
-    # Obtener la respuesta generada
-    ai_response = chat_response.choices[0].message.content.strip()
+    reply = completion.choices[0].message.content
 
-    # Crear la respuesta de voz de Twilio
     response = VoiceResponse()
-    response.say(ai_response, voice="Polly.Conchita", language="es-ES")
-
-    return str(response)
+    response.say(reply, voice="Polly.Lucia", language="es-ES")
+    response.hangup()
+    return Response(str(response), mimetype="application/xml")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
