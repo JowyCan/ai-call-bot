@@ -1,7 +1,8 @@
 import os
-from flask import Flask, request, send_file
+from flask import Flask, request
 from twilio.twiml.voice_response import VoiceResponse
 from openai import OpenAI
+import requests
 
 app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -9,7 +10,10 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
     response = VoiceResponse()
-    response.say("Hola. Esta llamada ha sido detectada como posible intento de cobro. Será grabada. Por favor, identifíquese.", voice="woman", language="es-ES")
+    response.say(
+        "Hola. Esta llamada ha sido detectada como posible intento de cobro. Será grabada. Por favor, identifíquese.",
+        voice="woman", language="es-ES"
+    )
     response.record(
         action="/process-recording",
         method="POST",
@@ -24,13 +28,10 @@ def process_recording():
     recording_url = request.form.get("RecordingUrl")
     audio_file_path = "/tmp/recording.wav"
     
-    # Descargamos el audio
-    import requests
     audio_data = requests.get(recording_url + ".wav").content
     with open(audio_file_path, "wb") as f:
         f.write(audio_data)
 
-    # Lo transcribimos usando OpenAI Whisper
     with open(audio_file_path, "rb") as audio_file:
         transcript = client.audio.transcriptions.create(
             model="whisper-1",
@@ -39,7 +40,6 @@ def process_recording():
 
     text = transcript.text.strip()
 
-    # Generamos la respuesta usando GPT
     completion = client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
@@ -50,7 +50,6 @@ def process_recording():
 
     response_text = completion.choices[0].message.content
 
-    # Respondemos con voz al llamante
     response = VoiceResponse()
     response.say(response_text, voice="woman", language="es-ES")
     return str(response)
@@ -58,4 +57,3 @@ def process_recording():
 @app.route("/")
 def home():
     return "Servidor Flask funcionando correctamente."
-
