@@ -1,24 +1,30 @@
 from flask import Flask, request, Response
+from flask_cors import CORS
 import openai
 from twilio.twiml.voice_response import VoiceResponse
 import os
+import csv
+from datetime import datetime
 
 app = Flask(__name__)
+CORS(app)  # Permitir peticiones CORS si haces pruebas desde frontend
 
 # Clave API de OpenAI desde Render (variable de entorno)
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-@app.route("/", methods=["GET"])
+# Ruta de prueba
+@app.route("/", methods=["GET", "POST"])
 def index():
     return "AI Call Bot operativo en /incoming-call"
 
+# Ruta principal para llamadas de Twilio
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
     try:
-        # Obtener número del llamante
-        caller_number = request.form.get("From")
+        caller_number = request.form.get("From", "desconocido")
+        print(f"📞 Llamada recibida de: {caller_number}")
 
-        # Prompt detallado para la IA
+        # Prompt a OpenAI
         prompt = f"""
 Recibes una llamada del número {caller_number}. Actúa como un asistente legal experto.
 
@@ -44,9 +50,20 @@ Tu tono debe ser profesional y tranquilo. Responde directamente como si hablaras
         )
 
         ai_reply = completion.choices[0].message["content"]
+
+        # Recorte de respuesta si es muy larga (Twilio puede fallar con >450 caracteres)
+        max_length = 450
+        if len(ai_reply) > max_length:
+            ai_reply = ai_reply[:max_length].rsplit('.', 1)[0] + '.'
+
         print("✅ Respuesta generada por la IA:", ai_reply)
 
-        # Crear respuesta de voz con Twilio
+        # Guardar log en CSV (opcional)
+        with open("call_log.csv", "a", newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow([datetime.now(), caller_number, ai_reply])
+
+        # Crear respuesta de voz
         response = VoiceResponse()
         response.say(ai_reply, voice='Polly.Conchita', language='es-ES')
 
@@ -54,11 +71,20 @@ Tu tono debe ser profesional y tranquilo. Responde directamente como si hablaras
 
     except Exception as e:
         print("❌ ERROR en la llamada:", e)
-        return "Error interno", 500
+        # Mensaje alternativo si falla la IA
+        fallback_response = VoiceResponse()
+        fallback_response.say(
+            "Esta llamada no ha sido autorizada. Absténgase de insistir. Gracias.",
+            voice='Polly.Conchita',
+            language='es-ES'
+        )
+        return Response(str(fallback_response), mimetype='text/xml')
 
+# Puerto dinámico para Render
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
