@@ -2,12 +2,10 @@ import os
 import requests
 from flask import Flask, request
 from twilio.twiml.voice_response import VoiceResponse
-from openai import OpenAI
+import openai
 
 app = Flask(__name__)
-
-# Configura el cliente de OpenAI correctamente
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
@@ -34,7 +32,7 @@ def process_recording():
 
     # Transcribir con Whisper
     with open(audio_file_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
+        transcript = openai.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file
         )
@@ -42,7 +40,7 @@ def process_recording():
     text = transcript.text.strip()
 
     # Generar respuesta con GPT
-    completion = client.chat.completions.create(
+    completion = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "Eres un asistente que disuade llamadas de cobro falsas."},
@@ -61,7 +59,6 @@ def process_recording():
 def home():
     return "Servidor Flask funcionando correctamente."
 
-# Necesario para que Render exponga correctamente el servicio
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
