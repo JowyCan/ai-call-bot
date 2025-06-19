@@ -1,11 +1,13 @@
 import os
-import requests
 from flask import Flask, request
 from twilio.twiml.voice_response import VoiceResponse
+import requests
 import openai
 
+# Configura la API Key de OpenAI
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
 app = Flask(__name__)
-client = openai.OpenAI()  # Usa OPENAI_API_KEY desde las variables de entorno
 
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
@@ -29,22 +31,22 @@ def process_recording():
     recording_url = request.form.get("RecordingUrl")
     audio_file_path = "/tmp/recording.wav"
 
-    # Descargar el audio
+    # Descargamos el audio desde Twilio
     audio_data = requests.get(recording_url + ".wav").content
     with open(audio_file_path, "wb") as f:
         f.write(audio_data)
 
     # Transcripción con Whisper
     with open(audio_file_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
+        transcript = openai.audio.transcriptions.create(
             model="whisper-1",
             file=audio_file
         )
 
     text = transcript.text.strip()
 
-    # Respuesta generada por GPT
-    completion = client.chat.completions.create(
+    # Generación de respuesta con GPT
+    completion = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "Eres un asistente que disuade llamadas de cobro falsas."},
@@ -54,7 +56,7 @@ def process_recording():
 
     response_text = completion.choices[0].message.content
 
-    # Responder con voz al llamante
+    # Respondemos al llamante
     response = VoiceResponse()
     response.say(response_text, voice="woman", language="es-ES")
     return str(response)
