@@ -50,7 +50,7 @@ Responde con una voz tranquila y profesional.
 
     # Crear respuesta de voz para Twilio
     response = VoiceResponse()
-    response.say(ai_reply, voice='alice', language='es-ES')
+    response.say(ai_reply, voice='Polly.Conchita', language='es-ES')
 
     return Response(str(response), mimetype='text/xml')
 
