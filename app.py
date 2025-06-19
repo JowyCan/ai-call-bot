@@ -1,65 +1,61 @@
 import os
-import requests
-from flask import Flask, request
+from flask import Flask, request, send_file
 from twilio.twiml.voice_response import VoiceResponse
-import openai
-
-# Configurar clave de API
-openai.api_key = os.getenv("OPENAI_API_KEY")
+from openai import OpenAI
 
 app = Flask(__name__)
-
-@app.route("/", methods=["GET"])
-def home():
-    return "Servidor de voz IA funcionando."
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
     response = VoiceResponse()
-
-    # Mensaje inicial sin pulsar teclas
-    response.say("Hola. Esta llamada está siendo analizada. Por favor, espere.", language="es-ES", voice="Polly.Conchita")
-
-    # Grabar la voz del llamante
+    response.say("Hola. Esta llamada ha sido detectada como posible intento de cobro. Será grabada. Por favor, identifíquese.", voice="woman", language="es-ES")
     response.record(
         action="/process-recording",
-        max_length=10,
-        transcribe=False,
+        method="POST",
+        max_length=20,
+        timeout=5,
         play_beep=True
     )
     return str(response)
 
 @app.route("/process-recording", methods=["POST"])
 def process_recording():
-    recording_url = request.form["RecordingUrl"]
-    audio_url = f"{recording_url}.wav"
-
-    # Descargar el audio
-    audio_data = requests.get(audio_url).content
-    with open("temp_audio.wav", "wb") as f:
+    recording_url = request.form.get("RecordingUrl")
+    audio_file_path = "/tmp/recording.wav"
+    
+    # Descargamos el audio
+    import requests
+    audio_data = requests.get(recording_url + ".wav").content
+    with open(audio_file_path, "wb") as f:
         f.write(audio_data)
 
-    # Transcripción
-    with open("temp_audio.wav", "rb") as audio_file:
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+    # Lo transcribimos usando OpenAI Whisper
+    with open(audio_file_path, "rb") as audio_file:
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file
+        )
 
-    # Respuesta IA
-    chat_response = openai.ChatCompletion.create(
-        model="gpt-4",
+    text = transcript.text.strip()
+
+    # Generamos la respuesta usando GPT
+    completion = client.chat.completions.create(
+        model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "Eres una IA que disuade llamadas de cobro con tono serio pero respetuoso."},
-            {"role": "user", "content": transcript["text"]}
-        ],
-        temperature=0.7
+            {"role": "system", "content": "Eres un asistente que disuade llamadas de cobro falsas."},
+            {"role": "user", "content": f"Mensaje del llamante: {text}"}
+        ]
     )
 
-    final_response = chat_response["choices"][0]["message"]["content"]
+    response_text = completion.choices[0].message.content
 
-    # Responder con voz
-    twilio_response = VoiceResponse()
-    twilio_response.say(final_response, language="es-ES", voice="Polly.Conchita")
+    # Respondemos con voz al llamante
+    response = VoiceResponse()
+    response.say(response_text, voice="woman", language="es-ES")
+    return str(response)
 
-    return str(twilio_response)
+@app.route("/")
+def home():
+    return "Servidor Flask funcionando correctamente."
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
