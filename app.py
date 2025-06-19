@@ -1,60 +1,65 @@
-from flask import Flask, request, Response
-from twilio.twiml.voice_response import VoiceResponse
-from openai import OpenAI
 import os
 import requests
-from io import BytesIO
+from flask import Flask, request
+from twilio.twiml.voice_response import VoiceResponse
+import openai
+
+# Configurar clave de API
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 app = Flask(__name__)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Servidor de voz IA funcionando."
 
 @app.route("/incoming-call", methods=["POST"])
 def incoming_call():
     response = VoiceResponse()
-    response.say("Hola. Esta llamada será grabada. Por favor, diga su mensaje después del tono.",
-                 voice="Polly.Lucia", language="es-ES")
+
+    # Mensaje inicial sin pulsar teclas
+    response.say("Hola. Esta llamada está siendo analizada. Por favor, espere.", language="es-ES", voice="Polly.Conchita")
+
+    # Grabar la voz del llamante
     response.record(
         action="/process-recording",
-        method="POST",
-        maxLength=10,
-        timeout=1,
+        max_length=10,
         transcribe=False,
-        playBeep=True
+        play_beep=True
     )
-    return Response(str(response), mimetype="application/xml")
+    return str(response)
 
 @app.route("/process-recording", methods=["POST"])
 def process_recording():
-    recording_url = request.form.get("RecordingUrl")
-    if not recording_url:
-        return "No recording received", 400
+    recording_url = request.form["RecordingUrl"]
+    audio_url = f"{recording_url}.wav"
 
-    audio_url = recording_url + ".wav"
+    # Descargar el audio
     audio_data = requests.get(audio_url).content
-    audio_file = BytesIO(audio_data)
+    with open("temp_audio.wav", "wb") as f:
+        f.write(audio_data)
 
-    transcript_response = client.audio.transcriptions.create(
-        model="whisper-1",
-        file=audio_file,
-        language="es"
-    )
-    transcript = transcript_response.text
+    # Transcripción
+    with open("temp_audio.wav", "rb") as audio_file:
+        transcript = openai.Audio.transcribe("whisper-1", audio_file)
 
-    chat_response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": transcript}],
+    # Respuesta IA
+    chat_response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "Eres una IA que disuade llamadas de cobro con tono serio pero respetuoso."},
+            {"role": "user", "content": transcript["text"]}
+        ],
         temperature=0.7
     )
-    reply = chat_response.choices[0].message.content
 
-    response = VoiceResponse()
-    response.say(reply, voice="Polly.Lucia", language="es-ES")
-    response.hangup()
-    return Response(str(response), mimetype="application/xml")
+    final_response = chat_response["choices"][0]["message"]["content"]
 
-@app.route("/", methods=["GET"])
-def index():
-    return "Bot operativo en /incoming-call"
+    # Responder con voz
+    twilio_response = VoiceResponse()
+    twilio_response.say(final_response, language="es-ES", voice="Polly.Conchita")
+
+    return str(twilio_response)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
